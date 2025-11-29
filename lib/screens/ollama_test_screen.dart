@@ -14,7 +14,7 @@ class _OllamaTestScreenState extends State<OllamaTestScreen> {
   bool _isLoading = false;
 
   // 👇 Replace this with your laptop’s local IP
-  final String ollamaHost = "192.168.1.1";  // Example
+  final String ollamaHost = "192.168.1.9";  // Example
   final int ollamaPort = 11434;
 
   Future<void> _pingOllama() async {

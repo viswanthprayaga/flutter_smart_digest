@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+
 import '../services/notification_service.dart';
 import '../services/summarizer_service.dart';
 
@@ -15,8 +16,9 @@ class _DigestScreenState extends State<DigestScreen> {
   final SummarizerService _summarizerService = SummarizerService();
 
   Map<String, List<Map<String, dynamic>>> groupedByDate = {};
-  String smartSummary = '';
-  bool isLoading = false;
+  String globalSmartSummary = '';
+
+  String? activeDateLoading; // Which date is currently loading?
 
   @override
   void initState() {
@@ -29,87 +31,90 @@ class _DigestScreenState extends State<DigestScreen> {
     setState(() {});
   }
 
-  /// 🔹 Generate AI summary via Ollama
-  Future<void> _generateAISummary() async {
-    setState(() => isLoading = true);
+  /// 🔥 Generate AI summary for a specific date
+  Future<void> _generateAISummaryForDate(String date) async {
+    setState(() => activeDateLoading = date);
+
+    final notes = groupedByDate[date] ?? [];
+    final allText = notes
+        .map((n) => "[${n['package']}] ${n['title']} - ${n['text']}")
+        .join("\n");
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('🤖 Generating AI summary...')),
+      SnackBar(
+        content: Text("🤖 Summarizing notifications for $date..."),
+      ),
     );
 
     final summary = await _summarizerService.generateAISummary();
 
     setState(() {
-      smartSummary = summary;
-      isLoading = false;
+      globalSmartSummary = summary;
+      activeDateLoading = null;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ AI summary ready!')),
+      const SnackBar(content: Text("✅ AI summary ready!")),
     );
   }
 
-  /// 🔹 Fallback local summary if AI not available
+  /// 🟡 Offline fallback summary
   Future<void> _generateLocalSummary() async {
     final summary = await _summarizerService.generateLocalSummary();
     setState(() {
-      smartSummary = summary;
+      globalSmartSummary = summary;
     });
   }
 
+  /// Small per-date summary of app counts
   String _generateAppSummary(List<Map<String, dynamic>> notifications) {
     final appCounts = <String, int>{};
     for (var n in notifications) {
       final app = n['package'] ?? 'unknown';
       appCounts[app] = (appCounts[app] ?? 0) + 1;
     }
+
     return appCounts.entries
-        .map((e) => "${e.key.split('.').last}: ${e.value} alerts")
+        .map((e) => "${e.key.split('.').last}: ${e.value}")
         .join(', ');
   }
 
   @override
   Widget build(BuildContext context) {
-    final dates = groupedByDate.keys.toList()..sort((a, b) => b.compareTo(a));
+    final dates = groupedByDate.keys.toList()
+      ..sort((a, b) => b.compareTo(a)); // newest first
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Smart Digest'),
+        title: const Text("Smart Digest"),
         backgroundColor: Colors.deepPurple,
         actions: [
           IconButton(
-            icon: const Icon(Icons.auto_awesome),
-            tooltip: 'Generate AI Summary',
-            onPressed: isLoading ? null : _generateAISummary,
-          ),
-          IconButton(
             icon: const Icon(Icons.offline_bolt),
-            tooltip: 'Generate Local Summary',
-            onPressed: isLoading ? null : _generateLocalSummary,
+            tooltip: "Offline Summary",
+            onPressed: _generateLocalSummary,
           ),
         ],
       ),
+
       body: dates.isEmpty
           ? const Center(
               child: Text(
-                'No notifications yet.\nCome back later!',
-                textAlign: TextAlign.center,
+                "No notifications yet.\nCome back later!",
                 style: TextStyle(fontSize: 16),
+                textAlign: TextAlign.center,
               ),
             )
           : Column(
               children: [
-                if (isLoading)
-                  const LinearProgressIndicator(
-                    color: Colors.deepPurple,
-                    minHeight: 3,
-                  ),
-                if (smartSummary.isNotEmpty)
+                /// GLOBAL SMART SUMMARY CARD
+                if (globalSmartSummary.isNotEmpty)
                   Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Card(
-                      elevation: 3,
                       color: Colors.deepPurple.shade50,
+                      elevation: 3,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -123,7 +128,7 @@ class _DigestScreenState extends State<DigestScreen> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                smartSummary,
+                                globalSmartSummary,
                                 style: const TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w500,
@@ -135,31 +140,44 @@ class _DigestScreenState extends State<DigestScreen> {
                       ),
                     ),
                   ),
+
                 Expanded(
                   child: ListView.builder(
                     itemCount: dates.length,
-                    itemBuilder: (context, i) {
-                      final date = dates[i];
+                    itemBuilder: (context, index) {
+                      final date = dates[index];
                       final notes = groupedByDate[date] ?? [];
+
                       return Card(
                         margin: const EdgeInsets.all(8),
                         child: ExpansionTile(
                           title: Text(
-                            DateFormat('EEE, MMM d')
-                                .format(DateTime.parse(date)),
-                            style:
-                                const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text('${notes.length} notifications'),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(_generateAppSummary(notes)),
+                            DateFormat("EEE, MMM d").format(
+                              DateTime.parse(date),
                             ),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                              "${notes.length} notifications • ${_generateAppSummary(notes)}"),
+
+                          children: [
+                            if (activeDateLoading == date)
+                              const Padding(
+                                padding: EdgeInsets.all(8.0),
+                                child: LinearProgressIndicator(
+                                  color: Colors.deepPurple,
+                                  minHeight: 3,
+                                ),
+                              ),
+
                             TextButton.icon(
-                              onPressed: isLoading ? null : _generateAISummary,
+                              onPressed: activeDateLoading != null
+                                  ? null
+                                  : () => _generateAISummaryForDate(date),
                               icon: const Icon(Icons.smart_toy_outlined),
-                              label: const Text('Smart Summarize (AI)'),
+                              label: const Text("Summarize with AI"),
                             ),
                           ],
                         ),
